@@ -1,0 +1,4 @@
+*.pyc
+streamlit-env/
+__pycache__/
+/streamlit-env/
