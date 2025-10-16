@@ -4,7 +4,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder, LabelEncoder
 from sklearn.ensemble import GradientBoostingClassifier
 
-URL = r"C:\Users\Keith\OneDrive - University of Johannesburg\Documents\Data scientist\Streamlit\section_2\mushrooms.csv"
+URL = "section_2/mushrooms.csv"
 COLS = ['class', 'odor', 'gill-size', 'gill-color', 'stalk-surface-above-ring',
        'stalk-surface-below-ring', 'stalk-color-above-ring',
        'stalk-color-below-ring', 'ring-type', 'spore-print-color']
