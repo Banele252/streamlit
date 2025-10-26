@@ -1,73 +1,119 @@
 import streamlit as st
 import pandas as pd
-import requests
+import matplotlib.pyplot as plt
+from supabase import create_client, Client
+from statsforecast import StatsForecast
+from statsforecast.models import CrostonOptimized
+
+# Initialize connection to db
 
 
-@st.cache_data(show_spinner="Searching...")
-def search_gutenberg(author, title):
-    BASE_URL = "https://gutendex.com/books?search="
-    author = author.replace(" ", "%20")
-    title = title.replace(" ", "%20")
+@st.cache_resource
+def init_connection():
+    url: str = st.secrets['supabase_url']
+    key: str = st.secrets['supabase_key']
 
-    params_url = f"{author}%20{title}"
+    client: Client = create_client(url, key)
 
-    search_url = f"{BASE_URL}{params_url}"
+    return client
 
-    try:
-        res = requests.get(search_url)
 
-        json_res = res.json()
+supabase = init_connection()
 
-        if json_res["count"] == 0:
-            return False
-        else:
-            return json_res
-    except:
-        return False
+# Query the db
+
+
+@st.cache_data(ttl=600)  # cache clears after 10 minutes
+def run_query():
+    # Return all data
+    return supabase.table('car_parts_monthly_sales').select("*").execute()
+
+
+@st.cache_data(ttl=600)
+def create_dataframe():
+    rows = run_query()
+    df = pd.json_normalize(rows.data)
+    df['volume'] = df['volume'].astype(int)
+
+    return df
 
 
 @st.cache_data
-def format_json_res(json_res):
-    cols = ['Id', 'Author', 'Title', 'Language', 'Link']
+def plot_volume(ids):
+    fig, ax = plt.subplots()
 
-    rows = []
+    x = df[df["parts_id"] == 2674]['date']
 
-    try:
-        for result in json_res["results"]:
+    for id in ids:
+        ax.plot(x,
+                df[df['parts_id'] == id]['volume'], label=id)
+    ax.xaxis.set_major_locator(plt.MaxNLocator(10))
+    ax.legend(loc='best')
+    fig.autofmt_xdate()
 
-            id = result["id"]
-            author = result["authors"][0]["name"]
-            title = result["title"]
-            language = result["languages"][0]
-            link = f"https://www.gutenberg.org/ebooks/{id}"
+    st.pyplot(fig)
 
-            rows.append([id, author, title, language, link])
 
-        df = pd.DataFrame(rows, columns=cols)
+@st.cache_data
+def format_dataset(ids):
+    model_df = df[df['parts_id'].isin(ids)]
+    model_df = model_df.drop(['id'], axis=1)
+    model_df.rename({"parts_id": "unique_id", "date": "ds",
+                    "volume": "y"}, axis=1, inplace=True)
 
-        return df
-    except:
-        st.error("Error while parsing data")
+    return model_df
+
+
+@st.cache_resource
+def create_sf_object(model_df):
+    models = [CrostonOptimized()]
+
+    sf = StatsForecast(
+        df=model_df,
+        models=models,
+        freq='MS',
+        n_jobs=-1
+    )
+
+    return sf
+
+
+@st.cache_data(show_spinner="Making predictions...")
+def make_predictions(ids, horizon):
+
+    model_df = format_dataset(ids)
+
+    sf = create_sf_object(model_df)
+
+    forecast_df = sf.forecast(h=horizon)
+
+    return forecast_df.to_csv(header=True)
 
 
 if __name__ == "__main__":
-    st.title("📚 Search Project Gutenberg")
-    with st.form("search-form"):
-        col1, col2 = st.columns(2)
+    st.title("Forecast product demand")
 
-        with col1:
-            author = st.text_input("Author")
-        with col2:
-            title = st.text_input("Title")
+    df = create_dataframe()
 
-        search = st.form_submit_button("Search", type='primary')
+    st.subheader("Select a product")
+    product_ids = st.multiselect(
+        "Select product ID", options=df['parts_id'].unique())
 
-    if search:
-        json_res = search_gutenberg(author, title)
+    plot_volume(product_ids)
 
-        if json_res:
-            df = format_json_res(json_res)
-            st.subheader("Results")
-            st.table(df)
+    with st.expander("Forecast"):
+        if len(product_ids) == 0:
+            st.warning("Select at least one product ID to forecast")
         else:
-            st.error("No results found")
+            horizon = st.slider("Horizon", 1, 12, step=1)
+
+            forecast_btn = st.button("Forecast", type="primary")
+
+            if forecast_btn:
+                csv_file = make_predictions(product_ids, horizon)
+                st.download_button(
+                    label="Download predictions",
+                    data=csv_file,
+                    file_name="predictions.csv",
+                    mime="text/csv"
+                )
