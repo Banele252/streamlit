@@ -2,3 +2,5 @@
 streamlit-env/
 __pycache__/
 /streamlit-env/
+secrets.toml
+secrets.txt
